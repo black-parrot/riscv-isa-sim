@@ -3,8 +3,12 @@
 #include "processor.h"
 #include "mmu.h"
 #include <cassert>
+#include "extra.h"
 
+stop_t stop;
 
+#define IS_END ((stop.on_cycle && stop.cur_cycle >= stop.stop_cycle) || (stop.on_pc && (long) state->pc == stop.stop_pc))
+ 
 static void commit_log_stash_privilege(processor_t* p)
 {
 #ifdef RISCV_ENABLE_COMMITLOG
@@ -39,26 +43,78 @@ static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn)
 {
 #ifdef RISCV_ENABLE_COMMITLOG
   auto& reg = state->log_reg_write;
+  auto& op1 = state->op1;
+  auto& op2 = state->op2;
+  auto& op3 = state->op3;
+  auto& m = state->m;
   int priv = state->last_inst_priv;
   int xlen = state->last_inst_xlen;
   int flen = state->last_inst_flen;
-
+  int signature = 0;
   fprintf(stderr, "%1d ", priv);
   commit_log_print_value(xlen, 0, pc);
   fprintf(stderr, " (");
   commit_log_print_value(insn.length() * 8, 0, insn.bits());
+  fprintf(stderr, ")");
+
+  if (op1.read)
+    signature |= 0b1;
+  if (op2.read)
+    signature |= 0b10;
+  if (reg.addr)
+    signature != 0b100;
+  if (m.access)
+    signature |= 0b10000;
+
+  if (op1.read) {  // rs1 read
+    fprintf(stderr, "\nrs1 r %c%2d ", (op1.is_float ? 'f' : 'x'), op1.reg);
+    commit_log_print_value(64, 0, (op1.is_float ? op1.fva.v[0] : op1.va));
+    op1.read = false;
+  }
+
+  if (op2.read) {  // rs2 read
+    fprintf(stderr, "\nrs2 r %c%2d ", (op2.is_float ? 'f' : 'x'), op2.reg);
+    commit_log_print_value(64, 0, (op2.is_float ? op2.fva.v[0] : op2.va));
+    op2.read = false;
+  }  
+
+  if (op3.read) {  // rs3 read
+    fprintf(stderr, "\nrs3 r %c%2d ", (op3.is_float ? 'f' : 'x'), op3.reg);
+    commit_log_print_value(64, 0, (op3.is_float ? op3.fva.v[0] : op3.va));
+    op2.read = false;
+  }
 
   if (reg.addr) {
     bool fp = reg.addr & 1;
     int rd = reg.addr >> 1;
     int size = fp ? flen : xlen;
-    fprintf(stderr, ") %c%2d ", fp ? 'f' : 'x', rd);
+    fprintf(stderr, "\nrd  w %c%2d ", fp ? 'f' : 'x', rd);
     commit_log_print_value(size, reg.data.v[1], reg.data.v[0]);
     fprintf(stderr, "\n");
+   
   } else {
-    fprintf(stderr, ")\n");
+    fprintf(stderr, "\n");
   }
+
+  if (m.access == true) {
+    fprintf(stderr, "mem ");
+    commit_log_print_value(64, 0, m.address);
+    if (m.lors) {
+      fprintf(stderr, " l ");
+      commit_log_print_value(64, 0, m.data_l);
+    } else {
+      fprintf(stderr, " s ");
+      commit_log_print_value(64, 0, m.data_s);
+    }
+    fprintf(stderr, "\n");
+    m.access = false;
+  }
+  // trun reading off
   reg.addr = 0;
+  stop.cur_cycle++;
+  if (IS_END) {
+    exit(1);
+  }
 #endif
 }
 

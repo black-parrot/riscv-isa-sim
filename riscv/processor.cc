@@ -146,7 +146,7 @@ void processor_t::set_histogram(bool value)
 #ifndef RISCV_ENABLE_HISTOGRAM
   if (value) {
     fprintf(stderr, "PC Histogram support has not been properly enabled;");
-    fprintf(stderr, " please re-build the riscv-isa-sim project using \"configure --enable-histogram\".\n");
+    fprintf(stderr, " please re-build the riscv-isa-run project using \"configure --enable-histogram\".\n");
   }
 #endif
 }
@@ -247,10 +247,10 @@ void processor_t::enter_debug_mode(uint8_t cause)
 void processor_t::take_trap(trap_t& t, reg_t epc)
 {
   if (debug) {
-    fprintf(stderr, "core %3d: exception %s, epc 0x%016" PRIx64 "\n",
+    fprintf(stderr, "exception %s,\nepc 0x%016" PRIx64 "\n",
             id, t.name(), epc);
     if (t.has_tval())
-      fprintf(stderr, "core %3d:           tval 0x%016" PRIx64 "\n", id,
+      fprintf(stderr, "tval 0x%016" PRIx64 "\n", id,
           t.get_tval());
   }
 
@@ -314,7 +314,7 @@ void processor_t::disasm(insn_t insn)
       fprintf(stderr, "core %3d: Executed %" PRIx64 " times\n", id, executions);
     }
 
-    fprintf(stderr, "core %3d: 0x%016" PRIx64 " (0x%08" PRIx64 ") %s\n",
+    fprintf(stderr, "core %3d: 0x%016" PRIx64 " (0x%08" PRIx64 ") \n%s\n",
             id, state.pc, bits, disassembler->disassemble(insn).c_str());
     last_pc = state.pc;
     last_bits = bits;

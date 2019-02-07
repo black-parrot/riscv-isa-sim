@@ -128,10 +128,11 @@ private:
 // helpful macros, etc
 #define MMU (*p->get_mmu())
 #define STATE (*p->get_state())
+#define READ_REG1(num, reg) STATE.read_reg(num, reg)
 #define READ_REG(reg) STATE.XPR[reg]
 #define READ_FREG(reg) STATE.FPR[reg]
-#define RS1 READ_REG(insn.rs1())
-#define RS2 READ_REG(insn.rs2())
+#define RS1 READ_REG1(1,insn.rs1())
+#define RS2 READ_REG1(2,insn.rs2())
 #define WRITE_RD(value) WRITE_REG(insn.rd(), value)
 
 #ifndef RISCV_ENABLE_COMMITLOG
@@ -163,9 +164,10 @@ private:
 #define RVC_SP READ_REG(X_SP)
 
 // FPU macros
-#define FRS1 READ_FREG(insn.rs1())
-#define FRS2 READ_FREG(insn.rs2())
-#define FRS3 READ_FREG(insn.rs3())
+#define READ_FREG1(num, reg) STATE.read_freg(num,reg)
+#define FRS1 READ_FREG1(1,insn.rs1())
+#define FRS2 READ_FREG1(2,insn.rs2())
+#define FRS3 READ_FREG1(3,insn.rs3())
 #define dirty_fp_state (STATE.mstatus |= MSTATUS_FS | (xlen == 64 ? MSTATUS64_SD : MSTATUS32_SD))
 #define dirty_ext_state (STATE.mstatus |= MSTATUS_XS | (xlen == 64 ? MSTATUS64_SD : MSTATUS32_SD))
 #define DO_WRITE_FREG(reg, value) (STATE.FPR.write(reg, value), dirty_fp_state)

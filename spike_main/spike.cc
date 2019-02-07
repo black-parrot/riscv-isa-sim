@@ -12,6 +12,9 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include "../riscv/extra.h"
+
+extern stop_t stop;
 
 static void help()
 {
@@ -26,6 +29,8 @@ static void help()
   fprintf(stderr, "  -l                    Generate a log of execution\n");
   fprintf(stderr, "  -h                    Print this help message\n");
   fprintf(stderr, "  -H                    Start halted, allowing a debugger to connect\n");
+  fprintf(stderr, "  --end-pc              Stop loging at a given pc\n");
+  fprintf(stderr, "  --end-cycle           Stop loging at a given cycle\n");
   fprintf(stderr, "  --isa=<name>          RISC-V ISA string [default %s]\n", DEFAULT_ISA);
   fprintf(stderr, "  --pc=<address>        Override ELF entry point\n");
   fprintf(stderr, "  --hartids=<a,b,...>   Explicitly specify hartids, default is 0,1,...\n");
@@ -130,6 +135,8 @@ int main(int argc, char** argv)
   parser.option('H', 0, 0, [&](const char* s){halted = true;});
   parser.option(0, "rbb-port", 1, [&](const char* s){use_rbb = true; rbb_port = atoi(s);});
   parser.option(0, "pc", 1, [&](const char* s){start_pc = strtoull(s, 0, 0);});
+  parser.option(0, "end-pc", 1, [&](const char* s){stop.stop_pc = strtoull(s, 0, 0); stop.on_pc = true;});
+  parser.option(0, "end-cycle", 1, [&](const char* s){stop.stop_cycle = strtoull(s, 0, 0); stop.on_cycle = true;});
   parser.option(0, "hartids", 1, hartids_parser);
   parser.option(0, "ic", 1, [&](const char* s){ic.reset(new icache_sim_t(s));});
   parser.option(0, "dc", 1, [&](const char* s){dc.reset(new dcache_sim_t(s));});
@@ -160,6 +167,7 @@ int main(int argc, char** argv)
   std::vector<std::string> htif_args(argv1, (const char*const*)argv + argc);
   if (mems.empty())
     mems = make_mems("2048");
+  mems.push_back(std::make_pair(reg_t(0x40000000), new mem_t(0x40000000)));
 
   if (!*argv1)
     help();
@@ -195,5 +203,6 @@ int main(int argc, char** argv)
   s.set_debug(debug);
   s.set_log(log);
   s.set_histogram(histogram);
-  return s.run();
+  int exit_code = s.run();
+  exit(exit_code);
 }

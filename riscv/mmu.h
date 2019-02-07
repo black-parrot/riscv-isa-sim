@@ -81,11 +81,20 @@ public:
   // template for functions that load an aligned value from memory
   #define load_func(type) \
     inline type##_t load_##type(reg_t addr) { \
+      if (proc) { \
+        proc->state.m.access = true;\
+        proc->state.m.address = addr;\
+        proc->state.m.lors = true; \
+      }\
       if (unlikely(addr & (sizeof(type##_t)-1))) \
         return misaligned_load(addr, sizeof(type##_t)); \
       reg_t vpn = addr >> PGSHIFT; \
-      if (likely(tlb_load_tag[vpn % TLB_ENTRIES] == vpn)) \
-        return *(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr); \
+      if (likely(tlb_load_tag[vpn % TLB_ENTRIES] == vpn)) {\
+        type##_t res = *(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr); \
+        if (proc) \
+	  proc->state.m.data_l = (reg_t) res;\
+        return res;\
+      }\
       if (unlikely(tlb_load_tag[vpn % TLB_ENTRIES] == (vpn | TLB_CHECK_TRIGGERS))) { \
         type##_t data = *(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr); \
         if (!matched_trigger) { \
@@ -93,10 +102,14 @@ public:
           if (matched_trigger) \
             throw *matched_trigger; \
         } \
+        if (proc) \
+          proc->state.m.data_l = (reg_t) data;\
         return data; \
       } \
       type##_t res; \
       load_slow_path(addr, sizeof(type##_t), (uint8_t*)&res); \
+      if (proc) \
+       proc->state.m.data_l = res;\
       return res; \
     }
 
@@ -115,6 +128,12 @@ public:
   // template for functions that store an aligned value to memory
   #define store_func(type) \
     void store_##type(reg_t addr, type##_t val) { \
+      if (proc) {\
+        proc->state.m.access = true;\
+        proc->state.m.lors = false; \
+        proc->state.m.address = addr;\
+        proc->state.m.data_s = (reg_t) val;\
+      }\
       if (unlikely(addr & (sizeof(type##_t)-1))) \
         return misaligned_store(addr, val, sizeof(type##_t)); \
       reg_t vpn = addr >> PGSHIFT; \

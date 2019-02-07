@@ -140,10 +140,78 @@ struct state_t
   } single_step;
 
 #ifdef RISCV_ENABLE_COMMITLOG
+  typedef struct {
+    reg_t reg;
+    bool is_float = false;
+    bool read = false;
+    int64_t va;
+    float128_t fva;
+  } op_t;
+  
+  typedef struct {
+    bool access = false;
+    reg_t address;
+    bool lors;
+    std::string align;
+    reg_t data_l;
+    reg_t data_s;
+  } mem_a_t;
+
+  reg_t read_reg(int i, reg_t reg){
+    reg_t val = XPR[reg];
+    if (i == 1) {
+      op1.read = true;
+      op1.is_float = false;
+      op1.reg = reg;
+      op1.va = val;
+    }
+    if (i == 2) {
+      op2.read = true;
+      op2.is_float = false;
+      op2.reg = reg;
+      op2.va = val;
+    }
+
+    if (i == 3) {
+      op3.read = true;
+      op3.is_float = false;
+      op3.reg = reg;
+      op3.va = val;
+    }
+    return val;
+  }
+
+  freg_t read_freg(int i, reg_t reg){
+    freg_t val = FPR[reg];
+    if (i == 1) {
+      op1.read = true;
+      op1.is_float = true;
+      op1.reg = reg;
+      op1.fva = val;
+    }
+    if (i == 2) {
+      op2.read = true;
+      op2.is_float = true;
+      op2.reg = reg;
+      op2.fva = val;
+    }
+
+    if (i == 3) {
+      op3.read = true;
+      op3.is_float = true;
+      op3.reg = reg;
+      op3.fva = val;
+    }
+    return val;
+  }
   commit_log_reg_t log_reg_write;
   reg_t last_inst_priv;
   int last_inst_xlen;
   int last_inst_flen;
+  op_t op1;
+  op_t op2;
+  op_t op3;
+  mem_a_t m;
 #endif
 };
 
