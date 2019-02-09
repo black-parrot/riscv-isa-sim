@@ -113,7 +113,7 @@ static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn)
   reg.addr = 0;
   stop.cur_cycle++;
   if (IS_END) {
-    exit(1);
+    exit(0);
   }
 #endif
 }
