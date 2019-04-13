@@ -39,7 +39,7 @@ static void commit_log_print_value(int width, uint64_t hi, uint64_t lo)
   }
 }
 
-static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn)
+static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn, mmu_t* mmu)
 {
 #ifdef RISCV_ENABLE_COMMITLOG
   auto& reg = state->log_reg_write;
@@ -51,11 +51,17 @@ static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn)
   int xlen = state->last_inst_xlen;
   int flen = state->last_inst_flen;
   int signature = 0;
+  bool translation_enabled = (priv != 0x3) && (state->satp >> 60);
   fprintf(stderr, "%1d ", priv);
   commit_log_print_value(xlen, 0, pc);
   fprintf(stderr, " (");
   commit_log_print_value(insn.length() * 8, 0, insn.bits());
   fprintf(stderr, ")");
+
+  if (translation_enabled) {
+    reg_t ppc = mmu->walk(pc, FETCH, priv) | (pc & (PGSIZE-1));
+    fprintf(stderr, "\nppc ");commit_log_print_value(xlen, 0, ppc);
+  }
 
   if (op1.read)
     signature |= 0b1;
@@ -98,13 +104,20 @@ static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn)
 
   if (m.access == true) {
     fprintf(stderr, "mem ");
+    reg_t paddr;
     commit_log_print_value(64, 0, m.address);
     if (m.lors) {
       fprintf(stderr, " l ");
+      paddr = mmu->walk(m.address, LOAD, priv) | (m.address & (PGSIZE-1));
       commit_log_print_value(64, 0, m.data_l);
     } else {
       fprintf(stderr, " s ");
+      paddr = mmu->walk(m.address, STORE, priv) | (m.address & (PGSIZE-1));
       commit_log_print_value(64, 0, m.data_s);
+    }
+    if (translation_enabled) {
+      fprintf(stderr, " paddr ");
+      commit_log_print_value(64, 0, paddr);
     }
     fprintf(stderr, "\n");
     m.access = false;
@@ -133,7 +146,7 @@ static reg_t execute_insn(processor_t* p, reg_t pc, insn_fetch_t fetch)
   commit_log_stash_privilege(p);
   reg_t npc = fetch.func(p, fetch.insn, pc);
   if (npc != PC_SERIALIZE_BEFORE) {
-    commit_log_print_insn(p->get_state(), pc, fetch.insn);
+    commit_log_print_insn(p->get_state(), pc, fetch.insn, p->get_mmu());
     p->update_histogram(pc);
   }
   return npc;

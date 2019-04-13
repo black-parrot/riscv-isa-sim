@@ -68,6 +68,9 @@ public:
 #endif
   }
 
+  // perform a page table walk for a given VA; set referenced/dirty bits
+  reg_t walk(reg_t addr, access_type type, reg_t prv);
+
   inline void misaligned_store(reg_t addr, reg_t data, size_t size)
   {
 #ifdef RISCV_ENABLE_MISALIGNED
@@ -322,9 +325,6 @@ private:
   // finish translation on a TLB miss and update the TLB
   tlb_entry_t refill_tlb(reg_t vaddr, reg_t paddr, char* host_addr, access_type type);
   const char* fill_from_mmio(reg_t vaddr, reg_t paddr);
-
-  // perform a page table walk for a given VA; set referenced/dirty bits
-  reg_t walk(reg_t addr, access_type type, reg_t prv);
 
   // handle uncommon cases: TLB misses, page faults, MMIO
   tlb_entry_t fetch_slow_path(reg_t addr);
