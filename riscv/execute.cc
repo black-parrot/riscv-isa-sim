@@ -59,8 +59,11 @@ static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn, mmu_t* 
   fprintf(stderr, ")");
 
   if (translation_enabled) {
-    reg_t ppc = mmu->walk(pc, FETCH, priv) | (pc & (PGSIZE-1));
-    fprintf(stderr, "\nppc ");commit_log_print_value(xlen, 0, ppc);
+    try {
+      reg_t ppc = mmu->walk(pc, FETCH, priv) | (pc & (PGSIZE-1));
+      fprintf(stderr, "\nppc ");commit_log_print_value(xlen, 0, ppc);
+    } catch(...) {
+    }
   }
 
   if (op1.read)
@@ -108,12 +111,18 @@ static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn, mmu_t* 
     commit_log_print_value(64, 0, m.address);
     if (m.lors) {
       fprintf(stderr, " l ");
-      paddr = mmu->walk(m.address, LOAD, priv) | (m.address & (PGSIZE-1));
-      commit_log_print_value(64, 0, m.data_l);
+      try{
+        paddr = mmu->walk(m.address, LOAD, priv) | (m.address & (PGSIZE-1));
+        commit_log_print_value(64, 0, m.data_l);
+      } catch(...) {
+      }
     } else {
       fprintf(stderr, " s ");
-      paddr = mmu->walk(m.address, STORE, priv) | (m.address & (PGSIZE-1));
-      commit_log_print_value(64, 0, m.data_s);
+      try {
+        paddr = mmu->walk(m.address, STORE, priv) | (m.address & (PGSIZE-1));
+        commit_log_print_value(64, 0, m.data_s);
+      } catch(...) {
+      }
     }
     if (translation_enabled) {
       fprintf(stderr, " paddr ");
