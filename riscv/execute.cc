@@ -76,19 +76,19 @@ static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn, mmu_t* 
     signature |= 0b10000;
 
   if (op1.read) {  // rs1 read
-    fprintf(stderr, "\nrs1 r %c%2d ", (op1.is_float ? 'f' : 'x'), op1.reg);
+    fprintf(stderr, "\nrs1 r %c%2d ", (op1.is_float ? 'f' : 'x'), (int) op1.reg);
     commit_log_print_value(64, 0, (op1.is_float ? op1.fva.v[0] : op1.va));
     op1.read = false;
   }
 
   if (op2.read) {  // rs2 read
-    fprintf(stderr, "\nrs2 r %c%2d ", (op2.is_float ? 'f' : 'x'), op2.reg);
+    fprintf(stderr, "\nrs2 r %c%2d ", (op2.is_float ? 'f' : 'x'), (int) op2.reg);
     commit_log_print_value(64, 0, (op2.is_float ? op2.fva.v[0] : op2.va));
     op2.read = false;
   }  
 
   if (op3.read) {  // rs3 read
-    fprintf(stderr, "\nrs3 r %c%2d ", (op3.is_float ? 'f' : 'x'), op3.reg);
+    fprintf(stderr, "\nrs3 r %c%2d ", (op3.is_float ? 'f' : 'x'), (int) op3.reg);
     commit_log_print_value(64, 0, (op3.is_float ? op3.fva.v[0] : op3.va));
     op2.read = false;
   }
@@ -107,7 +107,7 @@ static void commit_log_print_insn(state_t* state, reg_t pc, insn_t insn, mmu_t* 
 
   if (m.access == true) {
     fprintf(stderr, "mem ");
-    reg_t paddr;
+    reg_t paddr = 0;
     commit_log_print_value(64, 0, m.address);
     if (m.lors) {
       fprintf(stderr, " l ");

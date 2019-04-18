@@ -248,9 +248,9 @@ void processor_t::take_trap(trap_t& t, reg_t epc)
 {
   if (debug) {
     fprintf(stderr, "exception %s,\nepc 0x%016" PRIx64 "\n",
-            id, t.name(), epc);
+            t.name(), epc);
     if (t.has_tval())
-      fprintf(stderr, "tval 0x%016" PRIx64 "\n", id,
+      fprintf(stderr, "tval 0x%016" PRIx64 "\n",
           t.get_tval());
   }
 
