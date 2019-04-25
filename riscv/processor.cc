@@ -517,7 +517,7 @@ void processor_t::set_csr(int which, reg_t val)
 
   switch (which)
   {
-    case CSR_UFINISH: break;
+    case CSR_UFINISH: exit(val);
     case CSR_FFLAGS:
       dirty_fp_state;
       state.fflags = val & (FSR_AEXC >> FSR_AEXC_SHIFT);
