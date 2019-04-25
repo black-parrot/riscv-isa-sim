@@ -361,6 +361,7 @@ void processor_t::set_csr(int which, reg_t val)
 
   switch (which)
   {
+    case CSR_UFINISH: break;
     case CSR_FFLAGS:
       dirty_fp_state;
       state.fflags = val & (FSR_AEXC >> FSR_AEXC_SHIFT);
@@ -724,6 +725,8 @@ reg_t processor_t::get_csr(int which)
       return state.dpc & pc_alignment_mask();
     case CSR_DSCRATCH:
       return state.dscratch;
+    case CSR_UFINISH:
+      return 0;
   }
   throw trap_illegal_instruction(0);
 }
