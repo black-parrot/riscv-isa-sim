@@ -934,7 +934,7 @@ reg_t processor_t::get_csr(int which)
 
 reg_t illegal_instruction(processor_t* p, insn_t insn, reg_t pc)
 {
-  throw trap_illegal_instruction(0);
+  throw trap_illegal_instruction(insn.bits());
 }
 
 insn_func_t processor_t::decode_insn(insn_t insn)

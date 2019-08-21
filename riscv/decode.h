@@ -199,10 +199,11 @@ private:
 #define set_field(reg, mask, val) (((reg) & ~(decltype(reg))(mask)) | (((decltype(reg))(val) * ((mask) & ~((mask) << 1))) & (decltype(reg))(mask)))
 
 #define require(x) if (unlikely(!(x))) throw trap_illegal_instruction(0)
+#define require_insn(x) if (unlikely(!(x))) throw trap_illegal_instruction(insn.bits())
 #define require_privilege(p) require(STATE.prv >= (p))
-#define require_rv64 require(xlen == 64)
-#define require_rv32 require(xlen == 32)
-#define require_extension(s) require(p->supports_extension(s))
+#define require_rv64 require_insn(xlen == 64)
+#define require_rv32 require_insn(xlen == 32)
+#define require_extension(s) require_insn(p->supports_extension(s))
 #define require_fp require((STATE.mstatus & MSTATUS_FS) != 0)
 #define require_accelerator require((STATE.mstatus & MSTATUS_XS) != 0)
 
