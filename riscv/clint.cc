@@ -16,9 +16,9 @@ clint_t::clint_t(std::vector<processor_t*>& procs)
  * bffc mtime hi
  */
 
-#define MSIP_BASE	0x0
+#define MSIP_BASE	0x0000
 #define MTIMECMP_BASE	0x4000
-#define MTIME_BASE	0xbff8
+#define MTIME_BASE	0x8000
 
 bool clint_t::load(reg_t addr, size_t len, uint8_t* bytes)
 {
