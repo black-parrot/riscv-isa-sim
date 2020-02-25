@@ -5,8 +5,9 @@
 host_t::host_t(std::vector<processor_t*>& procs)
   : procs(procs), getchar_queue(), finish_signals(procs.size(), false)
 {
-  std::thread t(&host_t::monitor, this);
-  t.detach();
+  // fixme: This hangs the simulation if enabled
+  //std::thread t(&host_t::monitor, this);
+  //t.detach();
 }
 
 #define GETCHAR_BASE	0x0
