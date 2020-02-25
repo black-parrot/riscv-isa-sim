@@ -25,28 +25,53 @@ int main(int argc, char** argv)
   parser.option(0, "isa", 1, [&](const char* s){isa = s;});
   parser.parse(argv);
 
-  processor_t p(isa, 0, 0);
-  if (extension)
-    p.register_extension(extension());
+  std::string lowercase;
+  for (const char *p = isa; *p; p++)
+    lowercase += std::tolower(*p);
+
+  int xlen;
+  if (lowercase.compare(0, 4, "rv32") == 0) {
+    xlen = 32;
+  } else if (lowercase.compare(0, 4, "rv64") == 0) {
+    xlen = 64;
+  } else {
+    fprintf(stderr, "bad ISA string: %s\n", isa);
+    return 1;
+  }
+
+  disassembler_t* disassembler = new disassembler_t(xlen);
+  if (extension) {
+    for (auto disasm_insn : extension()->get_disasms()) {
+      disassembler->add_insn(disasm_insn);
+    }
+  }
 
   while (getline(cin, s))
   {
-    for (size_t start = 0; (start = s.find("DASM(", start)) != string::npos; )
+    for (size_t pos = 0; (pos = s.find("DASM(", pos)) != string::npos; )
     {
-      size_t end = s.find(')', start);
-      if (end == string::npos)
-        break;
+      size_t start = pos;
+
+      pos += strlen("DASM(");
+
+      if (s[pos] == '0' && (s[pos+1] == 'x' || s[pos+1] == 'X'))
+        pos += 2;
+
+      if (!isxdigit(s[pos]))
+        continue;
 
       char* endp;
-      size_t numstart = start + strlen("DASM(");
-      int64_t bits = strtoull(&s[numstart], &endp, 16);
-      size_t nbits = 4 * (endp - &s[numstart]);
+      int64_t bits = strtoull(&s[pos], &endp, 16);
+      if (*endp != ')')
+        continue;
+
+      size_t nbits = 4 * (endp - &s[pos]);
       if (nbits < 64)
         bits = bits << (64 - nbits) >> (64 - nbits);
 
-      string dis = p.get_disassembler()->disassemble(bits);
-      s = s.substr(0, start) + dis + s.substr(end+1);
-      start += dis.length();
+      string dis = disassembler->disassemble(bits);
+      s = s.substr(0, start) + dis + s.substr(endp - &s[0] + 1);
+      pos = start + dis.length();
     }
 
     cout << s << '\n';

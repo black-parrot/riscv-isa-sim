@@ -7,9 +7,10 @@
 #include "trap.h"
 #include "common.h"
 #include "config.h"
-#include "sim.h"
+#include "simif.h"
 #include "processor.h"
 #include "memtracer.h"
+#include "byteorder.h"
 #include <stdlib.h>
 #include <vector>
 
@@ -17,6 +18,7 @@
 #define PGSHIFT 12
 const reg_t PGSIZE = 1 << PGSHIFT;
 const reg_t PGMASK = ~(PGSIZE-1);
+#define MAX_PADDR_BITS 56 // imposed by Sv39 / Sv48
 
 struct insn_fetch_t
 {
@@ -26,7 +28,7 @@ struct insn_fetch_t
 
 struct icache_entry_t {
   reg_t tag;
-  reg_t pad;
+  struct icache_entry_t* next;
   insn_fetch_t data;
 };
 
@@ -53,7 +55,7 @@ class trigger_matched_t
 class mmu_t
 {
 public:
-  mmu_t(sim_t* sim, processor_t* proc);
+  mmu_t(simif_t* sim, processor_t* proc);
   ~mmu_t();
 
   inline reg_t misaligned_load(reg_t addr, size_t size)
@@ -78,26 +80,38 @@ public:
 #endif
   }
 
+#ifndef RISCV_ENABLE_COMMITLOG
+# define READ_MEM(addr, size) ({})
+#else
+# define READ_MEM(addr, size) \
+  proc->state.log_mem_read.push_back(std::make_tuple(addr, 0, size));
+#endif
+
   // template for functions that load an aligned value from memory
   #define load_func(type) \
     inline type##_t load_##type(reg_t addr) { \
       if (unlikely(addr & (sizeof(type##_t)-1))) \
         return misaligned_load(addr, sizeof(type##_t)); \
       reg_t vpn = addr >> PGSHIFT; \
-      if (likely(tlb_load_tag[vpn % TLB_ENTRIES] == vpn)) \
-        return *(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr); \
+      size_t size = sizeof(type##_t); \
+      if (likely(tlb_load_tag[vpn % TLB_ENTRIES] == vpn)) { \
+        if (proc) READ_MEM(addr, size); \
+        return from_le(*(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr)); \
+      } \
       if (unlikely(tlb_load_tag[vpn % TLB_ENTRIES] == (vpn | TLB_CHECK_TRIGGERS))) { \
-        type##_t data = *(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr); \
+        type##_t data = from_le(*(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr)); \
         if (!matched_trigger) { \
           matched_trigger = trigger_exception(OPERATION_LOAD, addr, data); \
           if (matched_trigger) \
             throw *matched_trigger; \
         } \
+        if (proc) READ_MEM(addr, size); \
         return data; \
       } \
       type##_t res; \
       load_slow_path(addr, sizeof(type##_t), (uint8_t*)&res); \
-      return res; \
+      if (proc) READ_MEM(addr, size); \
+      return from_le(res); \
     }
 
   // load value from memory at aligned address; zero extend to register width
@@ -112,25 +126,39 @@ public:
   load_func(int32)
   load_func(int64)
 
+#ifndef RISCV_ENABLE_COMMITLOG
+# define WRITE_MEM(addr, value, size) ({})
+#else
+# define WRITE_MEM(addr, val, size) \
+  proc->state.log_mem_write.push_back(std::make_tuple(addr, val, size));
+#endif
+
   // template for functions that store an aligned value to memory
   #define store_func(type) \
     void store_##type(reg_t addr, type##_t val) { \
       if (unlikely(addr & (sizeof(type##_t)-1))) \
         return misaligned_store(addr, val, sizeof(type##_t)); \
       reg_t vpn = addr >> PGSHIFT; \
-      if (likely(tlb_store_tag[vpn % TLB_ENTRIES] == vpn)) \
-        *(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr) = val; \
+      size_t size = sizeof(type##_t); \
+      if (likely(tlb_store_tag[vpn % TLB_ENTRIES] == vpn)) { \
+        if (proc) WRITE_MEM(addr, val, size); \
+        *(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr) = to_le(val); \
+      } \
       else if (unlikely(tlb_store_tag[vpn % TLB_ENTRIES] == (vpn | TLB_CHECK_TRIGGERS))) { \
         if (!matched_trigger) { \
           matched_trigger = trigger_exception(OPERATION_STORE, addr, val); \
           if (matched_trigger) \
             throw *matched_trigger; \
         } \
-        *(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr) = val; \
+        if (proc) WRITE_MEM(addr, val, size); \
+        *(type##_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr) = to_le(val); \
       } \
-      else \
-        store_slow_path(addr, sizeof(type##_t), (const uint8_t*)&val); \
-    }
+      else { \
+	type##_t le_val = to_le(val); \
+        if (proc) WRITE_MEM(addr, val, size); \
+        store_slow_path(addr, sizeof(type##_t), (const uint8_t*)&le_val); \
+      } \
+  }
 
   // template for functions that perform an atomic memory operation
   #define amo_func(type) \
@@ -144,10 +172,10 @@ public:
         return lhs; \
       } catch (trap_load_page_fault& t) { \
         /* AMO faults should be reported as store faults */ \
-        throw trap_store_page_fault(t.get_badaddr()); \
+        throw trap_store_page_fault(t.get_tval()); \
       } catch (trap_load_access_fault& t) { \
         /* AMO faults should be reported as store faults */ \
-        throw trap_store_access_fault(t.get_badaddr()); \
+        throw trap_store_access_fault(t.get_tval()); \
       } \
     }
 
@@ -180,6 +208,29 @@ public:
   amo_func(uint32)
   amo_func(uint64)
 
+  inline void yield_load_reservation()
+  {
+    load_reservation_address = (reg_t)-1;
+  }
+
+  inline void acquire_load_reservation(reg_t vaddr)
+  {
+    reg_t paddr = translate(vaddr, 1, LOAD);
+    if (auto host_addr = sim->addr_to_mem(paddr))
+      load_reservation_address = refill_tlb(vaddr, paddr, host_addr, LOAD).target_offset + vaddr;
+    else
+      throw trap_load_access_fault(vaddr); // disallow LR to I/O space
+  }
+
+  inline bool check_load_reservation(reg_t vaddr)
+  {
+    reg_t paddr = translate(vaddr, 1, STORE);
+    if (auto host_addr = sim->addr_to_mem(paddr))
+      return load_reservation_address == refill_tlb(vaddr, paddr, host_addr, STORE).target_offset + vaddr;
+    else
+      throw trap_store_access_fault(vaddr); // disallow SC to I/O space
+  }
+
   static const reg_t ICACHE_ENTRIES = 1024;
 
   inline size_t icache_index(reg_t addr)
@@ -190,25 +241,26 @@ public:
   inline icache_entry_t* refill_icache(reg_t addr, icache_entry_t* entry)
   {
     auto tlb_entry = translate_insn_addr(addr);
-    insn_bits_t insn = *(uint16_t*)(tlb_entry.host_offset + addr);
+    insn_bits_t insn = from_le(*(uint16_t*)(tlb_entry.host_offset + addr));
     int length = insn_length(insn);
 
     if (likely(length == 4)) {
-      insn |= (insn_bits_t)*(const int16_t*)translate_insn_addr_to_host(addr + 2) << 16;
+      insn |= (insn_bits_t)from_le(*(const int16_t*)translate_insn_addr_to_host(addr + 2)) << 16;
     } else if (length == 2) {
       insn = (int16_t)insn;
     } else if (length == 6) {
-      insn |= (insn_bits_t)*(const int16_t*)translate_insn_addr_to_host(addr + 4) << 32;
-      insn |= (insn_bits_t)*(const uint16_t*)translate_insn_addr_to_host(addr + 2) << 16;
+      insn |= (insn_bits_t)from_le(*(const int16_t*)translate_insn_addr_to_host(addr + 4)) << 32;
+      insn |= (insn_bits_t)from_le(*(const uint16_t*)translate_insn_addr_to_host(addr + 2)) << 16;
     } else {
       static_assert(sizeof(insn_bits_t) == 8, "insn_bits_t must be uint64_t");
-      insn |= (insn_bits_t)*(const int16_t*)translate_insn_addr_to_host(addr + 6) << 48;
-      insn |= (insn_bits_t)*(const uint16_t*)translate_insn_addr_to_host(addr + 4) << 32;
-      insn |= (insn_bits_t)*(const uint16_t*)translate_insn_addr_to_host(addr + 2) << 16;
+      insn |= (insn_bits_t)from_le(*(const int16_t*)translate_insn_addr_to_host(addr + 6)) << 48;
+      insn |= (insn_bits_t)from_le(*(const uint16_t*)translate_insn_addr_to_host(addr + 4)) << 32;
+      insn |= (insn_bits_t)from_le(*(const uint16_t*)translate_insn_addr_to_host(addr + 2)) << 16;
     }
 
     insn_fetch_t fetch = {proc->decode_insn(insn), insn};
     entry->tag = addr;
+    entry->next = &icache[icache_index(addr + length)];
     entry->data = fetch;
 
     reg_t paddr = tlb_entry.target_offset + addr;;
@@ -238,10 +290,29 @@ public:
 
   void register_memtracer(memtracer_t*);
 
+  int is_dirty_enabled()
+  {
+#ifdef RISCV_ENABLE_DIRTY
+    return 1;
+#else
+    return 0;
+#endif
+  }
+
+  int is_misaligned_enabled()
+  {
+#ifdef RISCV_ENABLE_MISALIGNED
+    return 1;
+#else
+    return 0;
+#endif
+  }
+
 private:
-  sim_t* sim;
+  simif_t* sim;
   processor_t* proc;
   memtracer_list_t tracer;
+  reg_t load_reservation_address;
   uint16_t fetch_temp;
 
   // implement an instruction cache for simulator performance
@@ -268,21 +339,30 @@ private:
   tlb_entry_t fetch_slow_path(reg_t addr);
   void load_slow_path(reg_t addr, reg_t len, uint8_t* bytes);
   void store_slow_path(reg_t addr, reg_t len, const uint8_t* bytes);
-  reg_t translate(reg_t addr, access_type type);
+  bool mmio_load(reg_t addr, size_t len, uint8_t* bytes);
+  bool mmio_store(reg_t addr, size_t len, const uint8_t* bytes);
+  bool mmio_ok(reg_t addr, access_type type);
+  reg_t translate(reg_t addr, reg_t len, access_type type);
 
   // ITLB lookup
   inline tlb_entry_t translate_insn_addr(reg_t addr) {
     reg_t vpn = addr >> PGSHIFT;
     if (likely(tlb_insn_tag[vpn % TLB_ENTRIES] == vpn))
       return tlb_data[vpn % TLB_ENTRIES];
+    tlb_entry_t result;
+    if (unlikely(tlb_insn_tag[vpn % TLB_ENTRIES] != (vpn | TLB_CHECK_TRIGGERS))) {
+      result = fetch_slow_path(addr);
+    } else {
+      result = tlb_data[vpn % TLB_ENTRIES];
+    }
     if (unlikely(tlb_insn_tag[vpn % TLB_ENTRIES] == (vpn | TLB_CHECK_TRIGGERS))) {
       uint16_t* ptr = (uint16_t*)(tlb_data[vpn % TLB_ENTRIES].host_offset + addr);
-      int match = proc->trigger_match(OPERATION_EXECUTE, addr, *ptr);
-      if (match >= 0)
-        throw trigger_matched_t(match, OPERATION_EXECUTE, addr, *ptr);
-      return tlb_data[vpn % TLB_ENTRIES];
+      int match = proc->trigger_match(OPERATION_EXECUTE, addr, from_le(*ptr));
+      if (match >= 0) {
+        throw trigger_matched_t(match, OPERATION_EXECUTE, addr, from_le(*ptr));
+      }
     }
-    return fetch_slow_path(addr);
+    return result;
   }
 
   inline const uint16_t* translate_insn_addr_to_host(reg_t addr) {
@@ -304,6 +384,9 @@ private:
     return new trigger_matched_t(match, operation, address, data);
   }
 
+  reg_t pmp_homogeneous(reg_t addr, reg_t len);
+  reg_t pmp_ok(reg_t addr, reg_t len, access_type type, reg_t mode);
+
   bool check_triggers_fetch;
   bool check_triggers_load;
   bool check_triggers_store;
@@ -320,23 +403,23 @@ struct vm_info {
   reg_t ptbase;
 };
 
-inline vm_info decode_vm_info(int xlen, reg_t prv, reg_t sptbr)
+inline vm_info decode_vm_info(int xlen, reg_t prv, reg_t satp)
 {
   if (prv == PRV_M) {
     return {0, 0, 0, 0};
   } else if (prv <= PRV_S && xlen == 32) {
-    switch (get_field(sptbr, SPTBR32_MODE)) {
-      case SPTBR_MODE_OFF: return {0, 0, 0, 0};
-      case SPTBR_MODE_SV32: return {2, 10, 4, (sptbr & SPTBR32_PPN) << PGSHIFT};
+    switch (get_field(satp, SATP32_MODE)) {
+      case SATP_MODE_OFF: return {0, 0, 0, 0};
+      case SATP_MODE_SV32: return {2, 10, 4, (satp & SATP32_PPN) << PGSHIFT};
       default: abort();
     }
   } else if (prv <= PRV_S && xlen == 64) {
-    switch (get_field(sptbr, SPTBR64_MODE)) {
-      case SPTBR_MODE_OFF: return {0, 0, 0, 0};
-      case SPTBR_MODE_SV39: return {3, 9, 8, (sptbr & SPTBR64_PPN) << PGSHIFT};
-      case SPTBR_MODE_SV48: return {4, 9, 8, (sptbr & SPTBR64_PPN) << PGSHIFT};
-      case SPTBR_MODE_SV57: return {5, 9, 8, (sptbr & SPTBR64_PPN) << PGSHIFT};
-      case SPTBR_MODE_SV64: return {6, 9, 8, (sptbr & SPTBR64_PPN) << PGSHIFT};
+    switch (get_field(satp, SATP64_MODE)) {
+      case SATP_MODE_OFF: return {0, 0, 0, 0};
+      case SATP_MODE_SV39: return {3, 9, 8, (satp & SATP64_PPN) << PGSHIFT};
+      case SATP_MODE_SV48: return {4, 9, 8, (satp & SATP64_PPN) << PGSHIFT};
+      case SATP_MODE_SV57: return {5, 9, 8, (satp & SATP64_PPN) << PGSHIFT};
+      case SATP_MODE_SV64: return {6, 9, 8, (satp & SATP64_PPN) << PGSHIFT};
       default: abort();
     }
   } else {
