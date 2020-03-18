@@ -1,3 +1,5 @@
+//Disable for BP
+require_dump(0);
 require_extension('M');
 if (xlen == 64)
   WRITE_RD(mulhsu(RS1, RS2));
